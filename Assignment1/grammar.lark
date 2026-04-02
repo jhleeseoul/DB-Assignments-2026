@@ -67,6 +67,7 @@ OFFSET: "offset"i
 
 
 // QUERY
+start : command
 command : query ";" | exit_query ";"
 
 exit_query : EXIT

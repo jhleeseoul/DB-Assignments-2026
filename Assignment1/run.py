@@ -10,8 +10,8 @@ EXIT_SIGNAL = "__EXIT__"
 
 
 class CommandTransformer(Transformer):
-    """Convert a parsed tree into the command label required by the project."""
-
+    """look into parsed tree and do the job we asked"""
+    """if method name same as rule name, call the method, and argument is the list of children"""
     def command(self, items):
         return items[0]
 
@@ -65,7 +65,7 @@ def build_parser() -> Lark:
 
 
 def extract_statements(buffer: str):
-    """Split complete semicolon-terminated statements while preserving quoted text."""
+    """Split complete semicolon terminated statements but not in quoted text"""
     statements = []
     start = 0
     in_single = False
@@ -116,7 +116,8 @@ def main():
 
         buffer = f"{buffer}\n{line}" if buffer else line
         statements, buffer = extract_statements(buffer)
-
+        
+        """statement is single command ends with semicolon"""
         for statement in statements:
             try:
                 command = parse_statement(parser, transformer, statement)
