@@ -208,3 +208,6 @@ __marimo__/
 
 # AI Agent
 .codex
+
+# Validation
+validate*
