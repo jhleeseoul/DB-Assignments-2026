@@ -18,6 +18,7 @@ class CommandTransformer(Transformer):
     def query(self, items):
         return items[0]
 
+    """since items are not used(not now), ignore them with _items"""
     def exit_query(self, _items):
         return EXIT_SIGNAL
 
@@ -59,6 +60,7 @@ class CommandTransformer(Transformer):
 
 
 def build_parser() -> Lark:
+    """build the parser using lark and grammar file"""
     grammar_path = Path(__file__).with_name("grammar.lark")
     with grammar_path.open("r", encoding="utf-8") as grammar_file:
         return Lark(grammar_file.read(), start="command", lexer="basic")
@@ -77,6 +79,7 @@ def extract_statements(buffer: str):
             escaped = False
             continue
 
+        """additional logic that consider backlash as escape character"""
         if char == "\\" and (in_single or in_double):
             escaped = True
             continue
@@ -99,6 +102,7 @@ def extract_statements(buffer: str):
 
 
 def parse_statement(parser: Lark, transformer: CommandTransformer, statement: str):
+    """parse the statement and transform it to command"""
     tree = parser.parse(statement)
     return transformer.transform(tree)
 
@@ -113,7 +117,7 @@ def main():
             line = input(PROMPT if not buffer else "")
         except EOFError:
             break
-
+        """buffer stores incomplete statements"""
         buffer = f"{buffer}\n{line}" if buffer else line
         statements, buffer = extract_statements(buffer)
         
@@ -122,6 +126,7 @@ def main():
             try:
                 command = parse_statement(parser, transformer, statement)
             except LarkError:
+                """LarkError catches all parsing errors"""
                 print(f"{PROMPT}Syntax error")
                 buffer = ""
                 break
