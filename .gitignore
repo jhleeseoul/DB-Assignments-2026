@@ -211,3 +211,12 @@ __marimo__/
 
 # Validation
 validate*
+
+# LMDB
+*.lmdb
+*.lmdb-lock
+
+# Microsoft Office files
+*.docx
+*.pdf
+
