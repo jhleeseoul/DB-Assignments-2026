@@ -87,6 +87,7 @@ run_case() {
 SC01_EXPECTED=(
   "'account' table is created"
   "The row is inserted::2"
+  "1 row in set"
   "'all_accounts' is renamed"
   "'all_accounts' is truncated"
   "'all_accounts' table is dropped"
@@ -182,6 +183,7 @@ SC04_EXPECTED=(
   "'mytable' table is created"
   "'my_table' is renamed"
   "The row is inserted"
+  "1 row in set"
   "'my_table' table is dropped"
 )
 SC04_INPUT="$(cat <<'SQL'
@@ -201,6 +203,8 @@ SQL
 SC05_EXPECTED=(
   "'mix' table is created"
   "The row is inserted::3"
+  "1 row in set"
+  "2 rows in set"
 )
 SC05_INPUT="$(cat <<'SQL'
 create table mix (

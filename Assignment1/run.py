@@ -948,7 +948,7 @@ def handle_explain(db: DBMS, parsed: dict, command_name: str) -> list[str]:
         " | ".join(str(row[i]).ljust(max_lengths[i]) for i in range(4))
         for row in ([header] + rows)
     ]
-    return [line] + text_rows + [line, f"{len(rows)} rows in set"]
+    return [line] + text_rows + [line, f"{len(rows)} row{'s' if len(rows) != 1 else ''} in set"]
 
 
 def handle_show_tables(db: DBMS) -> list[str]:
@@ -956,7 +956,7 @@ def handle_show_tables(db: DBMS) -> list[str]:
     # 그냥 줄바꿈 템플릿으로 감싸서 보여준다.
     tables = db.show_tables()
     line = "-" * 40
-    return [line, *tables, line, f"{len(tables)} rows in set"]
+    return [line, *tables, line, f"{len(tables)} row{'s' if len(tables) != 1 else ''} in set"]
 
 
 def handle_insert(db: DBMS, parsed: ParsedInsert | dict) -> list[str]:

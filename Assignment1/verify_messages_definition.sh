@@ -106,6 +106,7 @@ done
 
 echo
 if [[ "$FAILED" -eq 0 ]]; then
+  rm -f "$DB_FILE" "$LOCK_FILE"
   echo
   echo "[INFO] multi-row behavior check"
 
@@ -127,6 +128,10 @@ select * from verifier_multi;
 insert into verifier_multi values(5, 'ed', 50);
 select * from verifier_multi;
 drop table verifier_multi;
+create table one_row_meta (id int);
+explain one_row_meta;
+show tables;
+drop table one_row_meta;
 exit;
 SQL
 
@@ -163,6 +168,7 @@ SQL
   assert_in_file "row-4" 1 "4 | null | null" "$MULTI_TMP_OUT"
   assert_in_file "row-5" 1 "5 | ed | 50" "$MULTI_TMP_OUT"
   assert_in_file "final-1row" 1 "1 row in set" "$MULTI_TMP_OUT"
+  assert_in_file "single-row-explain-or-show" 3 "1 row in set" "$MULTI_TMP_OUT"
 
   if [[ "$MULTI_FAIL" -ne 0 ]]; then
     echo "[RESULT] FAIL: multi-row behavior check failed"
