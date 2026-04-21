@@ -218,11 +218,60 @@ exit;
 SQL
 )"
 
+SC06_EXPECTED=(
+  "'bulk' table is created"
+  "The row is inserted::5"
+  "1 | alice | 10"
+  "2 | bob | 20"
+  "3 | cara | 30"
+  "4 | null | null"
+  "4 rows in set"
+  "'bulk' is truncated"
+  "0 rows in set"
+  "5 | ed | 50"
+  "1 row in set"
+  "'bulk' table is dropped"
+)
+SC06_INPUT="$(cat <<'SQL'
+create table bulk (
+    id int,
+    name char(6),
+    score int
+);
+insert into bulk values(1, 'alice', 10);
+insert into bulk values(2, 'bob', 20);
+insert into bulk (id, name, score) values(3, 'cara', 30);
+insert into bulk(id) values(4);
+select * from bulk;
+truncate table bulk;
+select * from bulk;
+insert into bulk values(5, 'ed', 50);
+  select * from bulk;
+drop table bulk;
+exit;
+SQL
+)"
+
+SC07_EXPECTED=(
+  "'bulk_seq' table is created"
+  "The row is inserted::4"
+  "3 rows in set"
+  "3 | c | null"
+  "'bulk_seq' is truncated"
+  "0 rows in set"
+  "4 | x | 40"
+  "1 row in set"
+  "'bulk_seq' table is dropped"
+)
+SC07_INPUT="create table bulk_seq (id int, name char(6), score int); insert into bulk_seq values(1, 'a', 10); insert into bulk_seq values(2, 'b', 20); insert into bulk_seq (id, name) values(3, 'c'); select * from bulk_seq; truncate table bulk_seq; select * from bulk_seq; insert into bulk_seq values(4, 'x', 40); select * from bulk_seq; drop table bulk_seq; exit;"
+
 run_case "SC-01 기본 DDL/DML 플로우" SC01_EXPECTED "$SC01_INPUT"
 run_case "SC-02 Create Table 오류 검증" SC02_EXPECTED "$SC02_INPUT"
 run_case "SC-03 SELECT/DROP/TRUNCATE 오류 검증" SC03_EXPECTED "$SC03_INPUT"
 run_case "SC-04 Rename 및 대소문자 무시" SC04_EXPECTED "$SC04_INPUT"
 run_case "SC-05 SELECT/INSERT 시퀀스 혼합" SC05_EXPECTED "$SC05_INPUT"
+run_case "SC-06 멀티로우 조회/INSERT/DELETE 경로" SC06_EXPECTED "$SC06_INPUT"
+run_case "SC-07 한 줄 query sequence 멀티로우 경로" SC07_EXPECTED "$SC07_INPUT"
 
 echo "========================================"
 echo "Summary: PASS=$PASSED, FAIL=$FAILED, TOTAL=$TOTAL"

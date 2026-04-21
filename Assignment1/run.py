@@ -422,14 +422,19 @@ class DBMS:
         prefix = self._row_prefix(table)
         cursor = txn.cursor(self.rows_db)
         deleted = 0
+        to_delete: list[bytes] = []
+
         key = cursor.set_range(prefix)
         while key is not None and key is not False:
             current_key = cursor.key()
             if not current_key.startswith(prefix):
                 break
-            cursor.delete()
-            deleted += 1
+            to_delete.append(bytes(current_key))
             key = cursor.next()
+
+        for key_to_delete in to_delete:
+            txn.delete(key_to_delete, db=self.rows_db)
+            deleted += 1
         return deleted
 
     def _move_rows_for_rename(self, txn: lmdb.Transaction, old_name: str, new_name: str) -> int:

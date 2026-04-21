@@ -106,6 +106,105 @@ done
 
 echo
 if [[ "$FAILED" -eq 0 ]]; then
+  echo
+  echo "[INFO] multi-row behavior check"
+
+  MULTI_TMP_IN="$(mktemp)"
+  MULTI_TMP_OUT="$(mktemp)"
+  cat > "$MULTI_TMP_IN" <<'SQL'
+create table verifier_multi (
+    id int,
+    name char(6),
+    score int
+);
+insert into verifier_multi values(1, 'alice', 10);
+insert into verifier_multi values(2, 'bob', 20);
+insert into verifier_multi (id, name, score) values(3, 'cara', 30);
+insert into verifier_multi(id) values(4);
+select * from verifier_multi;
+truncate table verifier_multi;
+select * from verifier_multi;
+insert into verifier_multi values(5, 'ed', 50);
+select * from verifier_multi;
+drop table verifier_multi;
+exit;
+SQL
+
+  (
+    source "$VENV_ACTIVATE"
+    python "$RUNNER"
+  ) < "$MULTI_TMP_IN" > "$MULTI_TMP_OUT" 2>&1
+
+  assert_in_file() {
+    local name="$1"
+    local expected_count="$2"
+    local pattern="$3"
+    local target_file="$4"
+    local actual
+
+    actual="$(grep -F -c -- "$pattern" "$target_file" || true)"
+    if [[ "$actual" -ge "$expected_count" ]]; then
+      echo "[OK] ${name} => ${pattern} x${actual}"
+    else
+      echo "[MISS] ${name} => ${pattern} expected=${expected_count}, got=${actual}"
+      MULTI_FAIL=1
+    fi
+  }
+
+  MULTI_FAIL=0
+  assert_in_file "table-created" 1 "'verifier_multi' table is created" "$MULTI_TMP_OUT"
+  assert_in_file "inserted-4" 5 "The row is inserted" "$MULTI_TMP_OUT"
+  assert_in_file "initial-4rows" 1 "4 rows in set" "$MULTI_TMP_OUT"
+  assert_in_file "truncate-msg" 1 "'verifier_multi' is truncated" "$MULTI_TMP_OUT"
+  assert_in_file "after-truncate-0" 1 "0 rows in set" "$MULTI_TMP_OUT"
+  assert_in_file "row-1" 1 "1 | alice | 10" "$MULTI_TMP_OUT"
+  assert_in_file "row-2" 1 "2 | bob | 20" "$MULTI_TMP_OUT"
+  assert_in_file "row-3" 1 "3 | cara | 30" "$MULTI_TMP_OUT"
+  assert_in_file "row-4" 1 "4 | null | null" "$MULTI_TMP_OUT"
+  assert_in_file "row-5" 1 "5 | ed | 50" "$MULTI_TMP_OUT"
+  assert_in_file "final-1row" 1 "1 row in set" "$MULTI_TMP_OUT"
+
+  if [[ "$MULTI_FAIL" -ne 0 ]]; then
+    echo "[RESULT] FAIL: multi-row behavior check failed"
+    sed 's/^/[OUT] /' "$MULTI_TMP_OUT"
+    rm -f "$MULTI_TMP_IN" "$MULTI_TMP_OUT"
+    exit 1
+  fi
+
+  rm -f "$MULTI_TMP_IN" "$MULTI_TMP_OUT"
+
+  echo "[INFO] one-line query-sequence behavior check"
+
+  SEQ_TMP_IN="$(mktemp)"
+  SEQ_TMP_OUT="$(mktemp)"
+  cat > "$SEQ_TMP_IN" <<'SQL'
+create table verifier_seq (id int, name char(6), score int); insert into verifier_seq values(1, 'a', 10); insert into verifier_seq values(2, 'b', 20); insert into verifier_seq (id, name) values(3, 'c'); select * from verifier_seq; truncate table verifier_seq; select * from verifier_seq; insert into verifier_seq values(4, 'x', 40); select * from verifier_seq; drop table verifier_seq; exit;
+SQL
+
+  (
+    source "$VENV_ACTIVATE"
+    python "$RUNNER"
+  ) < "$SEQ_TMP_IN" > "$SEQ_TMP_OUT" 2>&1
+
+  assert_in_file "sequence-table-created" 1 "'verifier_seq' table is created" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-inserted" 4 "The row is inserted" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-3rows" 1 "3 rows in set" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-row-3" 1 "3 | c | null" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-truncate" 1 "'verifier_seq' is truncated" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-0rows" 1 "0 rows in set" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-row-reload" 1 "4 | x | 40" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-final-1row" 1 "1 row in set" "$SEQ_TMP_OUT"
+  assert_in_file "sequence-drop" 1 "'verifier_seq' table is dropped" "$SEQ_TMP_OUT"
+
+  if [[ "$MULTI_FAIL" -ne 0 ]]; then
+    echo "[RESULT] FAIL: one-line query-sequence behavior check failed"
+    sed 's/^/[OUT] /' "$SEQ_TMP_OUT"
+    rm -f "$SEQ_TMP_IN" "$SEQ_TMP_OUT"
+    exit 1
+  fi
+
+  rm -f "$SEQ_TMP_IN" "$SEQ_TMP_OUT"
+
   echo "[RESULT] PASS: $PASS/${#EXPECTED[@]}"
   exit 0
 else
