@@ -6,7 +6,7 @@
 모든 예시는 실행 전 DB 초기화가 필요할 수 있습니다.
 ```bash
 source Assignment1/.venv/bin/activate
-rm -f Assignment1/prj1_2.lmdb Assignment1/prj1_2.lmdb-lock
+rm -f Assignment1/DB/myDB.mdb Assignment1/DB/myDB.mdb-lock
 python Assignment1/run.py
 ```
 프롬프트는 `DB_2022-18758> ` 형식을 가정합니다.  

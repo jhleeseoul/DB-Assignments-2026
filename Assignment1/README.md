@@ -2,6 +2,22 @@
 
 **Due: 2026/04/22 (Wed), 11:59 P.M.**
 
+## DB 저장 규칙(현재 구현)
+
+실행 중 DB 파일은 프로젝트 폴더 내부에 생성됩니다.
+
+- DB 파일 경로: `Assignment1/DB/myDB.mdb`
+- 잠금 파일: `Assignment1/DB/myDB.mdb-lock`
+
+### 영속성
+
+- 프로그램 종료 후에도 LMDB 파일(`myDB.mdb`)에 스키마/데이터 상태가 저장됩니다.
+- 같은 경로의 파일을 재사용해 다음 실행에서도 기존 상태가 유지됩니다.
+
+### 제출 전 권장
+
+- 채점은 빈 DB 상태 기준으로 진행될 수 있으므로, 제출 전 `Assignment1/DB/myDB.mdb`를 초기화하거나 비우는 것을 권장합니다.
+
 ## 1. Project Overview
 
 이번 프로젝트의 목표는 프로젝트 1-1에서 구현한 SQL 파서 프로그램을 확장하여 DBMS(Database Management System)를 구현함으로써, 스키마를 저장하고 스키마에 접근할 수 있도록 하는 것이다.
