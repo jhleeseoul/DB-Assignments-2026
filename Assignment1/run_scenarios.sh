@@ -4,7 +4,7 @@ set -u
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_ACTIVATE="$BASE_DIR/.venv/bin/activate"
 RUNNER="$BASE_DIR/run.py"
-DB_FILE="$BASE_DIR/prj1_2.lmdb"
+DB_FILE="$BASE_DIR/DB/myDB.mdb"
 LOCK_FILE="${DB_FILE}-lock"
 
 if [[ ! -f "$VENV_ACTIVATE" ]]; then

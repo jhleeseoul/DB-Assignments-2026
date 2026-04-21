@@ -11,7 +11,11 @@ from lark.exceptions import LarkError
 STUDENT_ID = "2022-18758"
 PROMPT = f"DB_{STUDENT_ID}> "
 EXIT_SIGNAL = "__EXIT__"
-DB_FILE = "prj1_2.lmdb"
+
+# DB file must be stored inside project folder.
+PROJECT_ROOT = Path(__file__).resolve().parent
+DB_DIR = PROJECT_ROOT / "DB"
+DB_FILE = DB_DIR / "myDB.mdb"
 
 
 class DBError(Exception):
@@ -30,6 +34,7 @@ class DBMS:
     ROW_ID_WIDTH = 20
 
     def __init__(self, db_path: Path) -> None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         self.env = lmdb.open(
             str(db_path),
             subdir=False,
@@ -953,7 +958,7 @@ def dispatch(db: DBMS, parsed: dict) -> list[str]:
 def main():
     parser = build_parser()
     transformer = CommandTransformer()
-    database = DBMS(Path(__file__).with_name(DB_FILE))
+    database = DBMS(DB_FILE)
 
     buffer = ""
     try:
