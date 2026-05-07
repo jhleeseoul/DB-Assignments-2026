@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-set -u
+set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_ACTIVATE="$BASE_DIR/.venv/bin/activate"
 RUNNER="$BASE_DIR/run.py"
+VALIDATOR="$BASE_DIR/validate.py"
+VERIFY_MSG="$BASE_DIR/verify_messages_definition.sh"
 DB_FILE="$BASE_DIR/DB/myDB.mdb"
 LOCK_FILE="${DB_FILE}-lock"
 
@@ -15,270 +17,248 @@ if [[ ! -f "$RUNNER" ]]; then
   echo "[ERR] runner not found: $RUNNER"
   exit 1
 fi
+if [[ ! -f "$VALIDATOR" ]]; then
+  echo "[ERR] validator not found: $VALIDATOR"
+  exit 1
+fi
+if [[ ! -f "$VERIFY_MSG" ]]; then
+  echo "[ERR] message verifier not found: $VERIFY_MSG"
+  exit 1
+fi
+
+source "$VENV_ACTIVATE"
 
 TOTAL=0
 PASSED=0
 FAILED=0
 
+assert_contains() {
+  local file="$1"
+  local name="$2"
+  local pattern="$3"
+  local need="${4:-1}"
+  local got
+
+  got="$(grep -F -c -- "$pattern" "$file" || true)"
+  if [[ "$got" -ge "$need" ]]; then
+    echo "[OK] $name => $pattern x$got"
+    return 0
+  fi
+
+  echo "[MISS] $name => $pattern (need=$need, got=$got)"
+  return 1
+}
+
 run_case() {
-  local name="$1"
-  local -n expected_lines="$2"
-  local input="$3"
+  local case_name="$1"
+  local input_sql="$2"
+  shift 2
+  local patterns=("$@")
 
-  ((TOTAL += 1))
-  echo "========================================"
-  echo "Scenario: $name"
-  echo "----------------------------------------"
-
+  TOTAL=$((TOTAL + 1))
   rm -f "$DB_FILE" "$LOCK_FILE"
-  local tmp_in
-  local tmp_out
-  tmp_in="$(mktemp)"
-  tmp_out="$(mktemp)"
 
-  printf '%s\n' "$input" > "$tmp_in"
-  (
-    source "$VENV_ACTIVATE"
-    python "$RUNNER" < "$tmp_in"
-  ) > "$tmp_out" 2>&1
-  status=$?
+  local in_file out_file
+  in_file="$(mktemp)"
+  out_file="$(mktemp)"
 
-  if [[ $status -ne 0 ]]; then
-    echo "[FAIL] runner exited with non-zero status: $status"
+  printf '%s\n' "$input_sql" > "$in_file"
+
+  if ! python "$RUNNER" < "$in_file" > "$out_file" 2>&1; then
+    echo "[FAIL] $case_name (runner returned non-zero)"
+    sed 's/^/[OUT] /' "$out_file"
     FAILED=$((FAILED + 1))
-    echo "[OUT]"
-    sed 's/^/[  ] /' "$tmp_out"
-    rm -f "$tmp_in" "$tmp_out"
+    rm -f "$in_file" "$out_file"
     return
   fi
 
-  local fail=0
-  for expect in "${expected_lines[@]}"; do
-    local pattern="$expect"
-    local expected_count=1
-    if [[ "$expect" == *"::"* ]]; then
-      pattern="${expect%%::*}"
-      expected_count="${expect##*::}"
+  local failed=0
+  for spec in "${patterns[@]}"; do
+    local pat="$spec"
+    local need=1
+    if [[ "$spec" == *"::"* ]]; then
+      pat="${spec%%::*}"
+      need="${spec##*::}"
     fi
 
-    local actual_count
-    actual_count="$(grep -F -c -- "$pattern" "$tmp_out" || true)"
-    if [[ "$actual_count" -lt "$expected_count" ]]; then
-      echo "[MISS] expected at least $expected_count x: $pattern"
-      echo "[HAVE]  $actual_count"
-      fail=1
-    else
-      echo "[OK] $pattern x${actual_count}"
+    if ! assert_contains "$out_file" "$case_name" "$pat" "$need"; then
+      failed=1
     fi
   done
 
-  if [[ $fail -ne 0 ]]; then
-    echo "[FAIL] $name"
-    sed 's/^/[OUT] /' "$tmp_out"
-    FAILED=$((FAILED + 1))
-  else
-    echo "[PASS] $name"
+  if [[ "$failed" -eq 0 ]]; then
+    echo "[PASS] $case_name"
     PASSED=$((PASSED + 1))
+  else
+    echo "[FAIL] $case_name"
+    sed 's/^/[OUT] /' "$out_file"
+    FAILED=$((FAILED + 1))
   fi
 
-  rm -f "$tmp_in" "$tmp_out"
+  rm -f "$in_file" "$out_file"
 }
 
-SC01_EXPECTED=(
-  "'account' table is created"
-  "The row is inserted::2"
-  "1 row in set"
-  "'all_accounts' is renamed"
-  "'all_accounts' is truncated"
-  "'all_accounts' table is dropped"
-)
-SC01_INPUT="$(cat <<'SQL'
-create table account (
-    account_number int not null,
-    branch_name char(15)
-);
-insert into account values(9732, 'Perryridge');
-insert into account (branch_name, account_number) values('Round Hill', 305);
-show tables;
-select * from account;
-explain account;
-rename table account to all_accounts;
-select * from all_accounts;
-truncate table all_accounts;
-select * from all_accounts;
-drop table all_accounts;
-exit;
-SQL
-)"
-
-SC02_EXPECTED=(
-  "Create table has failed: column definition is duplicated"
-  "Create table has failed:cannot define non-existing column 'no_col' as primary key"
-  "Create table has failed: foreign key references non existing table or column"
-  "Char length should be over 0"
-  "'parent' table is created"
-)
-SC02_INPUT="$(cat <<'SQL'
-create table dupcol (
-    a int,
-    a int
-);
-create table no_pk (
-    id int,
-    primary key(no_col)
-);
-create table child (
-    c_id int,
-    p_id int,
-    foreign key(p_id) references parent(p_id)
-);
-create table lenerr (
-    name char(0)
-);
-create table parent (
-    id int,
-    primary key(id)
-);
-create table parent2 (
-    id int,
-    branch char(5),
-    foreign key(branch) references parent(id)
-);
-create table parent3 (
-    id int,
-    branch char(5),
-    foreign key(branch) references parent(branch_name)
-);
-exit;
-SQL
-)"
-
-SC03_EXPECTED=(
-  "Select has failed: 'not_exist' does not exist"
-  "Drop table has failed: no such table"
-  "'parent' table is created"
-  "'child' table is created"
-  "The row is inserted::2"
-  "Drop table has failed: 'parent' is referenced by another table"
-  "Truncate table has failed: 'parent' is referenced by another table"
-  "'child' table is dropped"
-  "'parent' table is dropped"
-)
-SC03_INPUT="$(cat <<'SQL'
-select * from not_exist;
-drop table not_exist;
-create table parent (id int, primary key(id));
-create table child (id int, parent_id int, primary key(id), foreign key(parent_id) references parent(id));
-insert into parent values(1);
-insert into child values(1,1);
-drop table parent;
-truncate table parent;
-drop table child;
-drop table parent;
-exit;
-SQL
-)"
-
-SC04_EXPECTED=(
-  "'mytable' table is created"
-  "'my_table' is renamed"
-  "The row is inserted"
-  "1 row in set"
-  "'my_table' table is dropped"
-)
-SC04_INPUT="$(cat <<'SQL'
-create table MyTable (
-    A int,
-    B char(10)
-);
-rename table MyTable to my_table;
-show tables;
-insert into MY_TABLE values(1, 'abcde');
-select * from my_table;
-drop table my_table;
-exit;
-SQL
-)"
-
-SC05_EXPECTED=(
-  "'mix' table is created"
-  "The row is inserted::3"
-  "1 row in set"
-  "2 rows in set"
-)
-SC05_INPUT="$(cat <<'SQL'
-create table mix (
-    id int,
-    note char(8),
-    amount int
-);
-insert into mix values(1, 'first', 10);
-insert into mix(note, amount, id) values('second', 20, 2);
-select * from mix;
-insert into mix(id) values(3);
-select * from mix;
-show tables;
-exit;
-SQL
-)"
-
-SC06_EXPECTED=(
-  "'bulk' table is created"
-  "The row is inserted::5"
-  "1 | alice | 10"
-  "2 | bob | 20"
-  "3 | cara | 30"
-  "4 | null | null"
-  "4 rows in set"
-  "'bulk' is truncated"
-  "0 rows in set"
-  "5 | ed | 50"
-  "1 row in set"
-  "'bulk' table is dropped"
-)
-SC06_INPUT="$(cat <<'SQL'
-create table bulk (
-    id int,
-    name char(6),
-    score int
-);
-insert into bulk values(1, 'alice', 10);
-insert into bulk values(2, 'bob', 20);
-insert into bulk (id, name, score) values(3, 'cara', 30);
-insert into bulk(id) values(4);
-select * from bulk;
-truncate table bulk;
-select * from bulk;
-insert into bulk values(5, 'ed', 50);
-  select * from bulk;
-drop table bulk;
-exit;
-SQL
-)"
-
-SC07_EXPECTED=(
-  "'bulk_seq' table is created"
-  "The row is inserted::4"
-  "3 rows in set"
-  "3 | c | null"
-  "'bulk_seq' is truncated"
-  "0 rows in set"
-  "4 | x | 40"
-  "1 row in set"
-  "'bulk_seq' table is dropped"
-)
-SC07_INPUT="create table bulk_seq (id int, name char(6), score int); insert into bulk_seq values(1, 'a', 10); insert into bulk_seq values(2, 'b', 20); insert into bulk_seq (id, name) values(3, 'c'); select * from bulk_seq; truncate table bulk_seq; select * from bulk_seq; insert into bulk_seq values(4, 'x', 40); select * from bulk_seq; drop table bulk_seq; exit;"
-
-run_case "SC-01 기본 DDL/DML 플로우" SC01_EXPECTED "$SC01_INPUT"
-run_case "SC-02 Create Table 오류 검증" SC02_EXPECTED "$SC02_INPUT"
-run_case "SC-03 SELECT/DROP/TRUNCATE 오류 검증" SC03_EXPECTED "$SC03_INPUT"
-run_case "SC-04 Rename 및 대소문자 무시" SC04_EXPECTED "$SC04_INPUT"
-run_case "SC-05 SELECT/INSERT 시퀀스 혼합" SC05_EXPECTED "$SC05_INPUT"
-run_case "SC-06 멀티로우 조회/INSERT/DELETE 경로" SC06_EXPECTED "$SC06_INPUT"
-run_case "SC-07 한 줄 query sequence 멀티로우 경로" SC07_EXPECTED "$SC07_INPUT"
-
-echo "========================================"
-echo "Summary: PASS=$PASSED, FAIL=$FAILED, TOTAL=$TOTAL"
-if [[ $FAILED -ne 0 ]]; then
+echo "[STEP] Running validate.py"
+if ! python "$VALIDATOR"; then
+  echo "[FAIL] validate.py failed"
   exit 1
 fi
+
+SC_A_INPUT="$(cat <<'SQL'
+create table a (id int, name char(6)); insert into a values(1,'alpha'); insert into a values(2,'beta'); select * from a order by id asc; exit;
+SQL
+)"
+
+SC_B_INPUT="$(cat <<'SQL'
+create table split_t (id int, txt char(20));
+insert into split_t values(1, 'abc;def');
+insert into split_t values(2, 'x;y;z');
+select * from split_t order by id asc;
+exit;
+SQL
+)"
+
+SC_C_INPUT="$(cat <<'SQL'
+create table p (id int not null, primary key(id));
+create table c (id int not null, pid int, primary key(id), foreign key(pid) references p(id));
+insert into p values(1);
+insert into p values(2);
+insert into c values(1,1);
+delete from p;
+select * from p order by id asc;
+exit;
+SQL
+)"
+
+SC_D_INPUT="$(cat <<'SQL'
+create table w1 (id int, c char(3));
+create table w2 (id int);
+insert into w1 values(1,'abc');
+insert into w2 values(1);
+select w1.id from w1 join w2 on w1.id = w2.id where id = 1;
+select w1.id from w1 where c > 'a';
+select * from w1 order by id asc limit -1;
+select * from w1 offset 1 limit 1;
+exit;
+SQL
+)"
+
+SC_E_INPUT="$(cat <<'SQL'
+create table j1 (id int, c char(3));
+create table j2 (id int, c char(3));
+insert into j1 values(1,'ab');
+insert into j2 values(1,'cd');
+select * from j1 join j2 on j1.id = j2.id;
+select j1.id from j1 join j2 on j1.c = j2.id;
+select j1.id from j1 join j2 on t9.id = j2.id;
+exit;
+SQL
+)"
+
+SC_F_INPUT="$(cat <<'SQL'
+create table g1 (id int, grp char(1), v int, d date);
+insert into g1 values(1,'A',10,2026-01-01);
+insert into g1 values(2,'A',20,2026-01-03);
+insert into g1 values(3,'B',null,null);
+select g1.grp, max(g1.d), min(g1.d), sum(g1.v) from g1 group by g1.grp order by g1.grp asc;
+select g1.grp, g1.id, sum(g1.v) from g1 group by g1.grp;
+exit;
+SQL
+)"
+
+SC_G_INPUT="$(cat <<'SQL'
+create table MyTable (ID int, Name char(5));
+insert into MYTABLE values(1, 'abcde');
+select x.id as xid, x.name as xname from mytable as x where x.id = 1 order by x.id asc;
+rename table mytable to my_table;
+show tables;
+exit;
+SQL
+)"
+
+SC_H_INPUT="$(cat <<'SQL'
+insert into no_table values(1);
+delete from no_table;
+select * from no_table;
+exit;
+SQL
+)"
+
+run_case \
+  "SC-A one-line sequence" \
+  "$SC_A_INPUT" \
+  "'a' table is created" \
+  "1 row inserted::2" \
+  "1 | alpha" \
+  "2 | beta"
+
+run_case \
+  "SC-B semicolon in string" \
+  "$SC_B_INPUT" \
+  "'split_t' table is created" \
+  "1 row inserted::2" \
+  "1 | abc;def" \
+  "2 | x;y;z"
+
+run_case \
+  "SC-C referential delete block" \
+  "$SC_C_INPUT" \
+  "'2' row(s) are not deleted due to referential integrity" \
+  "id" \
+  "2 rows in set"
+
+run_case \
+  "SC-D where/limit error mix" \
+  "$SC_D_INPUT" \
+  "Where clause contains ambiguous column reference" \
+  "Trying to compare incomparable columns or values" \
+  "Select has failed: LIMIT/OFFSET clause should be a non-negative integer" \
+  "Syntax error"
+
+run_case \
+  "SC-E join normal + errors" \
+  "$SC_E_INPUT" \
+  "j1.id | j1.c | j2.id | j2.c" \
+  "1 | ab | 1 | cd" \
+  "Trying to compare incomparable columns or values" \
+  "Join clause trying to reference non existing column"
+
+run_case \
+  "SC-F group by aggregate" \
+  "$SC_F_INPUT" \
+  "g1.grp | max(g1.d) | min(g1.d) | sum(g1.v)" \
+  "A | 2026-01-03 | 2026-01-01 | 30" \
+  "B | null | null | 0" \
+  "Select has failed: column 'id' must either be included in the GROUP BY clause or be used in an aggregate function"
+
+run_case \
+  "SC-G case-insensitive alias/rename" \
+  "$SC_G_INPUT" \
+  "'mytable' table is created" \
+  "1 row inserted" \
+  "xid | xname" \
+  "1 | abcde" \
+  "'my_table' is renamed" \
+  "my_table"
+
+run_case \
+  "SC-H no-such-table trio" \
+  "$SC_H_INPUT" \
+  "Insert has failed: no such table" \
+  "Delete has failed: no such table" \
+  "Select has failed: 'no_table' does not exist"
+
+echo "[STEP] Running message verifier"
+if ! bash "$VERIFY_MSG"; then
+  echo "[FAIL] verify_messages_definition.sh failed"
+  exit 1
+fi
+
+echo "========================================"
+echo "Summary: PASS=$PASSED FAIL=$FAILED TOTAL=$TOTAL"
+
+if [[ "$FAILED" -ne 0 ]]; then
+  exit 1
+fi
+
+echo "[RESULT] PASS"

@@ -14,7 +14,7 @@ SQ : "'"
 // Tokens
 STR : DQ _STRING_ESC_INNER DQ | SQ _STRING_ESC_INNER SQ
 DATE.9 : N N N N "-" N N "-" N N
-IDENTIFIER : C (C | "_")*
+IDENTIFIER : C (C | N | "_")*
 
 // Keywords
 TYPE_INT : "int"i
@@ -54,13 +54,22 @@ VALUES : "values"i
 DELETE : "delete"i
 UPDATE : "update"i
 SET : "set"i
+JOIN : "join"i
+ON : "on"i
+ORDER : "order"i
+BY : "by"i
+ASC : "asc"i
+GROUP : "group"i
+MAX : "max"i
+MIN : "min"i
+SUM : "sum"i
 
-LESSTHAN : "<"
 LESSEQUAL : "<="
-GREATERTHAN: ">"
+LESSTHAN : "<"
 GREATEREQUAL : ">="
-EQUAL: "="
+GREATERTHAN: ">"
 NOTEQUAL: "!="
+EQUAL: "="
 
 LIMIT: "limit"i
 OFFSET: "offset"i
@@ -103,6 +112,7 @@ data_type : TYPE_INT
           | TYPE_DATE
 table_name : IDENTIFIER
 column_name : IDENTIFIER
+column_ref : [table_name "."] column_name
 
 // table metadata queries
 drop_table_query : DROP TABLE table_name
@@ -124,21 +134,29 @@ value_list : LP comparable_value ("," comparable_value)* RP
 // DELETE
 delete_query : DELETE FROM table_name [where_clause]
 
-// UPDATE
+// UPDATE (not required in 1-3, but grammar is preserved)
 update_query : UPDATE table_name SET column_name EQUAL comparable_value [where_clause]
 
 // SELECT
-select_query : SELECT select_list table_expression [limit_clause] [offset_clause]
+select_query : SELECT select_list from_clause join_clause* [where_clause] [group_by_clause] [order_by_clause] [limit_clause] [offset_clause]
 select_list : "*"
-            | selected_column ("," selected_column)*
-selected_column : [table_name "."] column_name [AS column_name]
+            | select_item ("," select_item)*
+select_item : aggregate_expr [AS column_name]
+            | column_ref [AS column_name]
+aggregate_expr : aggregate_func LP column_ref RP
+aggregate_func : MAX | MIN | SUM
+
+from_clause : FROM table_reference
+table_reference : table_name [AS table_name]
+join_clause : JOIN table_reference ON join_condition
+join_condition : join_column_ref EQUAL join_column_ref
+join_column_ref : table_name "." column_name
+
+order_by_clause : ORDER BY column_ref order_direction
+order_direction : ASC | DESC
+group_by_clause : GROUP BY column_ref
 limit_clause : LIMIT INT
 offset_clause : OFFSET INT
-
-table_expression : from_clause [where_clause]
-from_clause : FROM table_reference_list
-table_reference_list : referred_table ("," referred_table)*
-referred_table : table_name [AS table_name]
 
 // WHERE
 where_clause : WHERE boolean_expr
@@ -151,14 +169,14 @@ parenthesized_boolean_expr : LP boolean_expr RP
 predicate : comparison_predicate
           | null_predicate
 comparison_op : LESSEQUAL
-          | LESSTHAN
-          | GREATERTHAN
-          | GREATEREQUAL
-          | EQUAL
-          | NOTEQUAL
+              | LESSTHAN
+              | GREATERTHAN
+              | GREATEREQUAL
+              | EQUAL
+              | NOTEQUAL
 comparison_predicate : comp_operand comparison_op comp_operand
 comp_operand : comparable_value
-             | [table_name "."] column_name
-comparable_value : INT | STR | DATE
-null_predicate : [table_name "."] column_name null_operation
+             | column_ref
+comparable_value : INT | STR | DATE | NULL
+null_predicate : column_ref null_operation
 null_operation : IS [NOT] NULL

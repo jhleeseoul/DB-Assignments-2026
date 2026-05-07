@@ -1,160 +1,123 @@
-# Project 1-2 시나리오 테스트셋
+# Project 1-3 시나리오 테스트셋 (확장판)
 
-과제 1-2 채점 전, 수동 검증용으로 사용할 테스트 시나리오입니다.
-아래 입력은 `python run.py`에 그대로 입력하거나 스크립트로 실행할 수 있습니다.
+이 문서는 과제 1-3 검증 범위를 넓히기 위한 시나리오 모음이다.
 
-모든 예시는 실행 전 DB 초기화가 필요할 수 있습니다.
+검증 범위:
+- INSERT/DELETE/SELECT 핵심 기능
+- WHERE/JOIN/ORDER BY/LIMIT/OFFSET
+- Optional GROUP BY + MAX/MIN/SUM
+- 메시지 정합성(README 메시지 표)
+- 문장 분리(멀티라인, 문자열 내 `;`)
+- 엣지 케이스(모호성, 타입 불일치, NULL, FK 차단)
+
+## 실행 준비
+
 ```bash
 source Assignment1/.venv/bin/activate
 rm -f Assignment1/DB/myDB.mdb Assignment1/DB/myDB.mdb-lock
 python Assignment1/run.py
 ```
-프롬프트는 `DB_2022-18758> ` 형식을 가정합니다.  
-`(expected)` 항목은 핵심 메시지 문자열만 기재했습니다.
 
-## SC-01 기본 DDL/DML 플로우
-```text
-create table account (
-    account_number int not null,
-    branch_name char(15)
-);
-insert into account values(9732, 'Perryridge');
-insert into account (branch_name, account_number) values('Round Hill', 305);
-show tables;
-select * from account;
-explain account;
-rename table account to all_accounts;
-select * from all_accounts;
-truncate table all_accounts;
-select * from all_accounts;
-drop table all_accounts;
-exit;
-```
-**expected**
-- `'account' table is created`
-- `The row is inserted` (2회)
-- `1`~`N rows in set` 형태 라인 (show tables 결과는 테이블 존재 시 개수)
-- `ACCOUNT_NUMBER | BRANCH_NAME` 헤더와 두 행 출력
-- `------------------------------------------------------------` 사이에 explain 출력 + `key` 컬럼이 `PRI`/빈칸 정확히 표시
-- `'all_accounts' is renamed`
-- `2 rows in set`
-- `'all_accounts' is truncated`
-- `0 rows in set`
-- `'all_accounts' table is dropped`
+## 시나리오 목록
 
-## SC-02 Create Table 오류 검증
-```text
-create table dupcol (
-    a int,
-    a int
-);
-create table no_pk (
-    id int,
-    primary key(no_col)
-);
-create table child (
-    c_id int,
-    p_id int,
-    foreign key(p_id) references parent(p_id)
-);
-create table lenerr (
-    name char(0)
-);
-create table parent (
-    id int,
-    primary key(id)
-);
-create table parent2 (
-    id int,
-    branch char(5),
-    foreign key(branch) references parent(id)
-);
-create table parent3 (
-    id int,
-    branch char(5),
-    foreign key(branch) references parent(branch_name)
-);
-```
-**expected**
-- `Create table has failed: column definition is duplicated`
-- `Create table has failed:cannot define non-existing column 'no_col' as primary key`
-- `Create table has failed: foreign key references non existing table or column`
-- `Char length should be over 0`
-- `'parent' table is created` (정상 생성)
-- `Create table has failed: foreign key references wrong type` 또는
-  `Create table has failed: foreign key references non primary key column` (테스트 환경에 맞는 메시지 확인)
+### SC-01 Prerequisite + End-to-End SELECT 파이프라인
+- 학생/강의/수강신청 3개 테이블 생성
+- INSERT 7건
+- JOIN + WHERE + ORDER BY
+- GROUP BY + aggregate + LIMIT/OFFSET
+- 검증 포인트:
+- `char(20)` truncate
+- 조인 결과/집계 결과 정합성
 
-## SC-03 Select / Drop / Truncate 에러 케이스
-```text
-select * from not_exist;
-drop table not_exist;
-create table parent (id int, primary key(id));
-create table child (id int, parent_id int, primary key(id), foreign key(parent_id) references parent(id));
-insert into parent values(1);
-insert into child values(1,1);
-drop table parent;
-truncate table parent;
-truncate table child;
-drop table child;
-drop table parent;
-exit;
-```
-**expected**
-- `Select has failed: 'not_exist' does not exist`
-- `Drop table has failed: no such table`
-- `'parent' table is created`
-- `'child' table is created`
-- `The row is inserted` (2회)
-- `Drop table has failed: 'parent' is referenced by another table`
-- `Truncate table has failed: 'parent' is referenced by another table`
-- `'child' table is dropped`
-- `'parent' table is dropped`
+### SC-02 INSERT 타입/개수/컬럼/NOT NULL 오류
+- 없는 테이블 insert
+- 없는 컬럼 지정 insert
+- 타입 불일치
+- 값 개수 불일치
+- 중복 컬럼 리스트
+- non-nullable 컬럼 NULL
+- 검증 포인트:
+- `Insert has failed: ...` 메시지 분기 정확성
 
-## SC-04 Rename 및 대소문자 무시
-```text
-create table MyTable (
-    A int,
-    B char(10)
-);
-rename table MyTable to my_table;
-show tables;
-insert into MY_TABLE values(1, 'abcde');
-select * from my_table;
-drop table my_table;
-exit;
-```
-**expected**
-- `'mytable' table is created` (저장 시 소문자화)
-- `'my_table' is renamed`
-- show tables에 `my_table` 출력
-- `The row is inserted`
-- `A | B` 또는 `A`/`B` 대문자 헤더 출력
-- `'my_table' table is dropped`
+### SC-03 DELETE + Referential Integrity All-or-Nothing
+- 부모/자식(FK) 생성
+- 부모 전체 삭제 시 FK 차단
+- 자식 선삭제 후 부모 삭제 성공
+- 검증 포인트:
+- `... not deleted due to referential integrity`
+- 삭제 count 메시지
 
-## SC-05 SELECT/INSERT 시퀀스 혼합
-```text
-create table mix (
-    id int,
-    note char(8),
-    amount int
-);
-insert into mix values(1, 'first', 10);
-insert into mix(note, amount, id) values('second', 20, 2);
-select * from mix;
-insert into mix(id) values(3);
-select * from mix;
-show tables;
-exit;
-```
-**expected**
-- `'mix' table is created`
-- `The row is inserted` (3회)
-- 첫 번째 select에서 1행 출력
-- 두 번째 select에서 2행 출력(없던 컬럼은 `null`)
-- show tables에서 `mix` 1개 존재
+### SC-04 WHERE 정상 동작(괄호/NOT/IS NULL/IS NOT NULL)
+- `(cond1 and not cond2) or cond3`
+- `is null`, `is not null`
+- 검증 포인트:
+- boolean expression 평가
+- NULL predicate 평가
+
+### SC-05 WHERE 오류 분기
+- AmbiguousReference
+- TableNotSpecified
+- ColumnNotExist
+- IncomparableError
+
+### SC-06 SELECT 컬럼 해석 및 ORDER BY 오류
+- SelectColumnResolveError
+- ORDER BY의 AmbiguousReference
+- ORDER BY의 TableNotSpecified
+- ORDER BY의 ColumnNotExist
+
+### SC-07 JOIN 정상/오류
+- `select *` join 헤더(중복 컬럼명 alias prefix)
+- JOIN 타입 불일치(Incomparable)
+- JOIN 참조 컬럼 오류(ColumnNotExist)
+
+### SC-08 LIMIT/OFFSET
+- 정상 offset/limit 조합
+- 음수 limit/offset 에러
+- `offset ... limit ...` 구문 SyntaxError
+
+### SC-09 GROUP BY 정상/오류
+- 그룹별 MAX/MIN/SUM
+- NULL-only 그룹 결과
+- SelectColumnNotGrouped
+- GROUP BY의 ambiguous/table-not-specified/column-not-exist
+
+### SC-10 aggregate without GROUP BY
+- 전체 집합 aggregate
+- `sum(char)`는 0
+- 날짜 MAX/MIN 비교
+
+### SC-11 대소문자/alias/rename
+- 식별자 대소문자 혼합 입력
+- AS alias 사용
+- rename/show tables 회귀 확인
+
+### SC-12 문자열 내 세미콜론 + statement 분리
+- `'abc;def'` 데이터 insert
+- statement extractor 안정성 검증
+
+### SC-13 NoSuchTable 메시지 3종
+- INSERT/DELETE/SELECT 각각 no such table
+
+### SC-14 TRUNCATE/DROP FK 보호
+- 참조 중인 parent truncate/drop 실패
+- child drop 후 parent drop 성공
+
+### SC-15 UPDATE 비지원 동작 고정
+- `update ...` 입력 시 Syntax error
 
 ---
 
-## 실행 팁
-- 각 시나리오를 개별로 실행하면 영속 상태 간섭을 줄일 수 있습니다.
-- 여러 시나리오를 한번에 돌릴 경우, 마지막에 `drop table` 정리를 해두면 다음 실행이 깨끗합니다.
+## 자동 검증 명령
+
+```bash
+source Assignment1/.venv/bin/activate
+python Assignment1/validate.py
+bash Assignment1/run_scenarios.sh
+bash Assignment1/verify_messages_definition.sh
+```
+
+PASS 기준:
+- `validate.py`: grammar + runtime 확장 시나리오 모두 PASS
+- `run_scenarios.sh`: 확장 edge scenario 전부 PASS
+- `verify_messages_definition.sh`: 메시지 타입 검증 PASS
