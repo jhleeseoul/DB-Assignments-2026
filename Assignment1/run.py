@@ -162,9 +162,31 @@ class DBMS:
     def _normalize_type_name(type_name: str) -> str:
         return type_name.lower()
 
+    def _fk_columns(self, fk: dict) -> list[str]:
+        raw_columns = fk.get("columns")
+        if isinstance(raw_columns, list):
+            return [self._to_key_text(col) for col in raw_columns if isinstance(col, str)]
+
+        raw_column = fk.get("column")
+        if isinstance(raw_column, str):
+            return [self._to_key_text(raw_column)]
+        return []
+
+    def _fk_ref_columns(self, fk: dict) -> list[str]:
+        raw_columns = fk.get("ref_columns")
+        if isinstance(raw_columns, list):
+            return [self._to_key_text(col) for col in raw_columns if isinstance(col, str)]
+
+        raw_column = fk.get("ref_column")
+        if isinstance(raw_column, str):
+            return [self._to_key_text(raw_column)]
+        return []
+
     def _normalize_column_constraint(self, table_meta: dict) -> None:
         pk_set = set(table_meta.get("pk", []))
-        fk_set = set(fk["column"] for fk in table_meta.get("fks", []))
+        fk_set = set()
+        for fk in table_meta.get("fks", []):
+            fk_set.update(self._fk_columns(fk))
         for col in table_meta["columns"]:
             col["is_pk"] = col["name"] in pk_set
             col["is_fk"] = col["name"] in fk_set
@@ -193,6 +215,7 @@ class DBMS:
                 raise DBError("Create table has failed: table with the same name already exists")
 
             col_names = []
+            src_col_meta = {}
             for column in columns:
                 c = self._to_key_text(column["name"])
                 if c in col_names:
@@ -204,6 +227,10 @@ class DBMS:
                 ):
                     raise DBError("Char length should be over 0")
                 col_names.append(c)
+                src_col_meta[c] = {
+                    "type": self._normalize_type_name(column["type"]),
+                    "char_len": column.get("char_len"),
+                }
 
             if len(pk_defs) > 1:
                 raise DBError("Create table has failed: primary key definition is duplicated")
@@ -219,44 +246,48 @@ class DBMS:
 
             prepared_fks = []
             for fk in fk_defs:
-                if len(fk["columns"]) != 1 or len(fk["ref_columns"]) != 1:
+                fk_columns = [self._to_key_text(col) for col in fk.get("columns", [])]
+                ref_columns = [self._to_key_text(col) for col in fk.get("ref_columns", [])]
+
+                if not fk_columns or not ref_columns or len(fk_columns) != len(ref_columns):
                     raise DBError("Create table has failed: foreign key references non existing table or column")
 
-                col_name = self._to_key_text(fk["columns"][0])
-                if col_name not in col_set:
-                    raise DBError(
-                        f"Create table has failed: cannot define non-existing column '{col_name}' as foreign key"
-                    )
+                for col_name in fk_columns:
+                    if col_name not in col_set:
+                        raise DBError(
+                            f"Create table has failed: cannot define non-existing column '{col_name}' as foreign key"
+                        )
 
                 ref_table = self._to_key_text(fk["ref_table"])
-                ref_column = self._to_key_text(fk["ref_columns"][0])
                 ref_meta = self._get_table_meta(txn, ref_table)
                 if ref_meta is None:
                     raise DBError("Create table has failed: foreign key references non existing table or column")
 
                 ref_col_dict = {c["name"]: c for c in ref_meta["columns"]}
-                if ref_column not in ref_col_dict:
-                    raise DBError("Create table has failed: foreign key references non existing table or column")
+                for ref_column in ref_columns:
+                    if ref_column not in ref_col_dict:
+                        raise DBError("Create table has failed: foreign key references non existing table or column")
 
-                if ref_column not in ref_meta.get("pk", []):
+                ref_pk = [self._to_key_text(col) for col in ref_meta.get("pk", [])]
+                if ref_columns != ref_pk:
                     raise DBError("Create table has failed: foreign key references non primary key column")
 
-                src_col_meta = next(c for c in columns if self._to_key_text(c["name"]) == col_name)
-                src_type = src_col_meta["type"]
-                src_char_len = src_col_meta["char_len"]
-                tgt_type = ref_col_dict[ref_column]["type"]
-                tgt_char_len = ref_col_dict[ref_column]["char_len"]
+                for col_name, ref_column in zip(fk_columns, ref_columns):
+                    src_type = src_col_meta[col_name]["type"]
+                    src_char_len = src_col_meta[col_name]["char_len"]
+                    tgt_type = ref_col_dict[ref_column]["type"]
+                    tgt_char_len = ref_col_dict[ref_column]["char_len"]
 
-                if src_type != tgt_type:
-                    raise DBError("Create table has failed: foreign key references wrong type")
-                if src_type == "char" and src_char_len != tgt_char_len:
-                    raise DBError("Create table has failed: foreign key references wrong type")
+                    if src_type != tgt_type:
+                        raise DBError("Create table has failed: foreign key references wrong type")
+                    if src_type == "char" and src_char_len != tgt_char_len:
+                        raise DBError("Create table has failed: foreign key references wrong type")
 
                 prepared_fks.append(
                     {
-                        "column": col_name,
+                        "columns": fk_columns,
                         "ref_table": ref_table,
-                        "ref_column": ref_column,
+                        "ref_columns": ref_columns,
                     }
                 )
 
@@ -636,22 +667,28 @@ class QueryExecutor:
                 if fk.get("ref_table") != target_table:
                     continue
 
-                parent_col = fk["ref_column"]
-                child_col = fk["column"]
-                parent_idx = target_col_idx.get(parent_col)
-                child_idx = child_col_idx.get(child_col)
-                if parent_idx is None or child_idx is None:
+                parent_columns = self.db._fk_ref_columns(fk)
+                child_columns = self.db._fk_columns(fk)
+                if not parent_columns or not child_columns or len(parent_columns) != len(child_columns):
+                    continue
+
+                parent_indices = [target_col_idx.get(col) for col in parent_columns]
+                child_indices = [child_col_idx.get(col) for col in child_columns]
+                if any(idx is None for idx in parent_indices) or any(idx is None for idx in child_indices):
                     continue
 
                 ref_values = set()
                 for child_row in child_rows:
-                    ref_value = child_row[child_idx]
-                    if ref_value is not None:
-                        ref_values.add(ref_value)
+                    ref_tuple = tuple(child_row[idx] for idx in child_indices)
+                    if any(value is None for value in ref_tuple):
+                        continue
+                    ref_values.add(ref_tuple)
 
                 for _key, parent_row in candidate_rows:
-                    parent_value = parent_row[parent_idx]
-                    if parent_value is not None and parent_value in ref_values:
+                    parent_tuple = tuple(parent_row[idx] for idx in parent_indices)
+                    if any(value is None for value in parent_tuple):
+                        continue
+                    if parent_tuple in ref_values:
                         return True
         return False
 

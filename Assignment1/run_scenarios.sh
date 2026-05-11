@@ -184,6 +184,27 @@ exit;
 SQL
 )"
 
+SC_I_INPUT="$(cat <<'SQL'
+create table md (id int, d date, name char(2));
+explain md;
+desc md;
+describe md;
+exit;
+SQL
+)"
+
+SC_J_INPUT="$(cat <<'SQL'
+create table p_comp (a int, b int, primary key(a,b));
+create table c_partial (x int, foreign key(x) references p_comp(a));
+create table c_comp (a int, b int, foreign key(a,b) references p_comp(a,b));
+insert into p_comp values(1,10);
+insert into c_comp values(1,10);
+delete from p_comp where a = 1 and b = 10;
+select * from p_comp order by a asc;
+exit;
+SQL
+)"
+
 run_case \
   "SC-A one-line sequence" \
   "$SC_A_INPUT" \
@@ -247,6 +268,26 @@ run_case \
   "Insert has failed: no such table" \
   "Delete has failed: no such table" \
   "Select has failed: 'no_table' does not exist"
+
+run_case \
+  "SC-I DATE metadata explain/desc/describe" \
+  "$SC_I_INPUT" \
+  "'md' table is created" \
+  "column_name | type::3" \
+  "| date::3" \
+  "3 rows in set::3"
+
+run_case \
+  "SC-J composite FK validation + RI delete block" \
+  "$SC_J_INPUT" \
+  "'p_comp' table is created" \
+  "Create table has failed: foreign key references non primary key column" \
+  "'c_comp' table is created" \
+  "1 row inserted::2" \
+  "'1' row(s) are not deleted due to referential integrity" \
+  "a | b" \
+  "1 | 10" \
+  "1 row in set"
 
 echo "[STEP] Running message verifier"
 if ! bash "$VERIFY_MSG"; then
