@@ -1,7 +1,7 @@
 from .config import EXIT_SIGNAL
 from .executor import QueryExecutor
 from .formatting import _format_result_set
-from .messages import _msg_delete_result, _msg_delete_ri_blocked
+from .messages import _msg_delete_result, _msg_delete_ri_blocked, _msg_update_result
 from .storage import DBMS
 
 
@@ -75,6 +75,11 @@ def handle_select(executor: QueryExecutor, parsed: dict) -> list[str]:
     return _format_result_set(headers, rows)
 
 
+def handle_update(executor: QueryExecutor, parsed: dict) -> list[str]:
+    count = executor.execute_update(parsed)
+    return [_msg_update_result(count)]
+
+
 def handle_rename(db: DBMS, parsed: dict) -> list[str]:
     new_name = db.rename_table(parsed["old_name"], parsed["new_name"])
     return [f"'{new_name}' is renamed"]
@@ -104,10 +109,10 @@ def dispatch(db: DBMS, executor: QueryExecutor, parsed: dict) -> list[str]:
         return handle_delete(executor, parsed)
     if kind == "SELECT":
         return handle_select(executor, parsed)
+    if kind == "UPDATE":
+        return handle_update(executor, parsed)
     if kind == "RENAME_TABLE":
         return handle_rename(db, parsed)
     if kind == "TRUNCATE_TABLE":
         return handle_truncate(db, parsed)
-    if kind == "UPDATE":
-        return ["Syntax error"]
     return ["Syntax error"]

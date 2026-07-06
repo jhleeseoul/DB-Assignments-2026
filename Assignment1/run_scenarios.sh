@@ -205,6 +205,35 @@ exit;
 SQL
 )"
 
+SC_K_INPUT="$(cat <<'SQL'
+create table upd (id int not null, name char(4), score int);
+insert into upd values(1,'ann',10);
+insert into upd values(2,null,20);
+update upd set name = 'longname', score = 25 where id = 2;
+update upd set score = 7;
+select * from upd order by id asc;
+update upd set id = null where id = 1;
+update upd set no_col = 1;
+update upd set score = 'bad';
+exit;
+SQL
+)"
+
+SC_L_INPUT="$(cat <<'SQL'
+create table agg2 (grp char(1), bucket int, val int, note char(3));
+insert into agg2 values('A',2,10,'aa');
+insert into agg2 values('A',1,20,null);
+insert into agg2 values('B',2,30,'bb');
+insert into agg2 values('B',1,null,'cc');
+select grp, bucket, count(*), count(note), avg(val), avg(note), sum(val)
+from agg2
+group by grp, bucket
+order by grp asc, bucket desc;
+select count(*), count(note), avg(val), avg(note) from agg2;
+exit;
+SQL
+)"
+
 run_case \
   "SC-A one-line sequence" \
   "$SC_A_INPUT" \
@@ -288,6 +317,32 @@ run_case \
   "a | b" \
   "1 | 10" \
   "1 row in set"
+
+run_case \
+  "SC-K phase1 update behavior" \
+  "$SC_K_INPUT" \
+  "'upd' table is created" \
+  "1 row inserted::2" \
+  "'1' row(s) updated" \
+  "'2' row(s) updated" \
+  "1 | ann | 7" \
+  "2 | long | 7" \
+  "Update has failed: 'id' is not nullable" \
+  "Update has failed: 'no_col' does not exist" \
+  "Update has failed: types are not matched"
+
+run_case \
+  "SC-L phase1 aggregate multi group/order" \
+  "$SC_L_INPUT" \
+  "'agg2' table is created" \
+  "1 row inserted::4" \
+  "grp | bucket | count(*) | count(note) | avg(val) | avg(note) | sum(val)" \
+  "A | 2 | 1 | 1 | 10.0 | 0 | 10" \
+  "A | 1 | 1 | 0 | 20.0 | 0 | 20" \
+  "B | 2 | 1 | 1 | 30.0 | 0 | 30" \
+  "B | 1 | 1 | 1 | 0 | 0 | 0" \
+  "count(*) | count(note) | avg(val) | avg(note)" \
+  "4 | 3 | 20.0 | 0"
 
 echo "[STEP] Running message verifier"
 if ! bash "$VERIFY_MSG"; then

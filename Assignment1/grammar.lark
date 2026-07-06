@@ -63,6 +63,8 @@ GROUP : "group"i
 MAX : "max"i
 MIN : "min"i
 SUM : "sum"i
+COUNT : "count"i
+AVG : "avg"i
 
 LESSEQUAL : "<="
 LESSTHAN : "<"
@@ -134,8 +136,10 @@ value_list : LP comparable_value ("," comparable_value)* RP
 // DELETE
 delete_query : DELETE FROM table_name [where_clause]
 
-// UPDATE (not required in 1-3, but grammar is preserved)
-update_query : UPDATE table_name SET column_name EQUAL comparable_value [where_clause]
+// UPDATE
+update_query : UPDATE table_name SET set_clause [where_clause]
+set_clause : set_item ("," set_item)*
+set_item : column_name EQUAL comparable_value
 
 // SELECT
 select_query : SELECT select_list from_clause join_clause* [where_clause] [group_by_clause] [order_by_clause] [limit_clause] [offset_clause]
@@ -143,8 +147,11 @@ select_list : "*"
             | select_item ("," select_item)*
 select_item : aggregate_expr [AS column_name]
             | column_ref [AS column_name]
-aggregate_expr : aggregate_func LP column_ref RP
-aggregate_func : MAX | MIN | SUM
+aggregate_expr : count_func LP count_arg RP
+               | aggregate_func LP column_ref RP
+count_func : COUNT
+count_arg : "*" | column_ref
+aggregate_func : MAX | MIN | SUM | AVG
 
 from_clause : FROM table_reference
 table_reference : table_name [AS table_name]
@@ -152,9 +159,10 @@ join_clause : JOIN table_reference ON join_condition
 join_condition : join_column_ref EQUAL join_column_ref
 join_column_ref : table_name "." column_name
 
-order_by_clause : ORDER BY column_ref order_direction
+order_by_clause : ORDER BY order_item ("," order_item)*
+order_item : column_ref order_direction
 order_direction : ASC | DESC
-group_by_clause : GROUP BY column_ref
+group_by_clause : GROUP BY column_ref ("," column_ref)*
 limit_clause : LIMIT INT
 offset_clause : OFFSET INT
 

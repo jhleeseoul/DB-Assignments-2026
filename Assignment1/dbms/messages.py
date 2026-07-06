@@ -17,6 +17,22 @@ def _msg_insert_non_nullable(col_name: str) -> str:
     return f"Insert has failed: '{col_name}' is not nullable"
 
 
+def _msg_update_result(count: int) -> str:
+    return f"'{count}' row(s) updated"
+
+
+def _msg_update_type_mismatch() -> str:
+    return "Update has failed: types are not matched"
+
+
+def _msg_update_column_not_exist(col_name: str) -> str:
+    return f"Update has failed: '{col_name}' does not exist"
+
+
+def _msg_update_non_nullable(col_name: str) -> str:
+    return f"Update has failed: '{col_name}' is not nullable"
+
+
 def _msg_delete_result(count: int) -> str:
     return f"'{count}' row(s) deleted"
 

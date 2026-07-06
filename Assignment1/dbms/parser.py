@@ -164,8 +164,28 @@ class CommandTransformer(Transformer):
             "where": None if where_expr is None else where_expr["expr"],
         }
 
-    def update_query(self, _items):
-        return {"kind": "UPDATE"}
+    def update_query(self, items):
+        table = self._first_identifier(items)
+        assignments = next((item for item in items if isinstance(item, list)), [])
+        where_expr = next((item for item in items if isinstance(item, dict) and item.get("node") == "where"), None)
+        if table is None or not assignments:
+            return {"kind": "INVALID"}
+        return {
+            "kind": "UPDATE",
+            "table": table,
+            "assignments": assignments,
+            "where": None if where_expr is None else where_expr["expr"],
+        }
+
+    def set_clause(self, items):
+        return [item for item in items if isinstance(item, dict) and item.get("node") == "set_item"]
+
+    def set_item(self, items):
+        column = next((item for item in items if isinstance(item, str) and not self._is_reserved_keyword(item)), None)
+        value = next((item for item in items if isinstance(item, dict) and item.get("kind") == "literal"), None)
+        if column is None or value is None:
+            return {"node": "set_item", "column": "", "value": {"kind": "literal", "type": "null", "value": None}}
+        return {"node": "set_item", "column": column, "value": value}
 
     def select_query(self, items):
         select_part = None
@@ -191,9 +211,9 @@ class CommandTransformer(Transformer):
                 elif tag == "where":
                     where_expr = item["expr"]
                 elif tag == "group_by":
-                    group_by = item["column"]
+                    group_by = item["columns"]
                 elif tag == "order_by":
-                    order_by = {"column": item["column"], "direction": item["direction"]}
+                    order_by = item["items"]
                 elif tag == "limit":
                     limit_val = item["value"]
                 elif tag == "offset":
@@ -244,11 +264,29 @@ class CommandTransformer(Transformer):
         return {"expr": expr, "alias": alias}
 
     def aggregate_expr(self, items):
-        func = next((item for item in items if isinstance(item, str) and item in {"max", "min", "sum"}), None)
+        func = next((item for item in items if isinstance(item, str) and item in {"max", "min", "sum", "count", "avg"}), None)
+        aggregate_arg = next((item for item in items if isinstance(item, dict) and item.get("node") == "aggregate_arg"), None)
         col_ref = next((item for item in items if isinstance(item, dict) and item.get("kind") == "column"), None)
-        if func is None or col_ref is None:
+        if func is None:
+            return {"kind": "INVALID"}
+        if aggregate_arg is not None:
+            if aggregate_arg.get("star"):
+                return {"kind": "aggregate", "func": func, "star": True}
+            return {"kind": "aggregate", "func": func, "column": aggregate_arg["column"]}
+        if col_ref is None:
             return {"kind": "INVALID"}
         return {"kind": "aggregate", "func": func, "column": col_ref}
+
+    def count_func(self, items):
+        if not items:
+            return None
+        return items[0]
+
+    def count_arg(self, items):
+        col_ref = next((item for item in items if isinstance(item, dict) and item.get("kind") == "column"), None)
+        if col_ref is None:
+            return {"node": "aggregate_arg", "star": True}
+        return {"node": "aggregate_arg", "star": False, "column": col_ref}
 
     def aggregate_func(self, items):
         if not items:
@@ -297,9 +335,13 @@ class CommandTransformer(Transformer):
         return {"kind": "column", "table": None, "column": ""}
 
     def order_by_clause(self, items):
+        order_items = [item for item in items if isinstance(item, dict) and item.get("node") == "order_item"]
+        return {"node": "order_by", "items": order_items}
+
+    def order_item(self, items):
         col_ref = next((item for item in items if isinstance(item, dict) and item.get("kind") == "column"), None)
         direction = next((item for item in items if isinstance(item, str) and item in {"asc", "desc"}), "asc")
-        return {"node": "order_by", "column": col_ref, "direction": direction}
+        return {"node": "order_item", "column": col_ref, "direction": direction}
 
     def order_direction(self, items):
         if not items:
@@ -307,8 +349,8 @@ class CommandTransformer(Transformer):
         return items[0]
 
     def group_by_clause(self, items):
-        col_ref = next((item for item in items if isinstance(item, dict) and item.get("kind") == "column"), None)
-        return {"node": "group_by", "column": col_ref}
+        col_refs = [item for item in items if isinstance(item, dict) and item.get("kind") == "column"]
+        return {"node": "group_by", "columns": col_refs}
 
     def limit_clause(self, items):
         int_value = next((item for item in items if isinstance(item, int)), None)
@@ -474,6 +516,12 @@ class CommandTransformer(Transformer):
     def SUM(self, _token):
         return "sum"
 
+    def COUNT(self, _token):
+        return "count"
+
+    def AVG(self, _token):
+        return "avg"
+
     def ASC(self, _token):
         return "asc"
 
@@ -516,6 +564,8 @@ class CommandTransformer(Transformer):
             "order",
             "by",
             "group",
+            "count",
+            "avg",
         }
 
     @classmethod
