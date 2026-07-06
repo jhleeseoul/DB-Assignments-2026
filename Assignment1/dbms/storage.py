@@ -4,10 +4,17 @@ from typing import Any
 
 import lmdb
 
+from .constraints import (
+    has_primary_key_duplicate,
+    row_has_foreign_key_violation,
+    validate_date_literal,
+)
 from .errors import DBError
 from .messages import (
     _msg_insert_column_not_exist,
     _msg_insert_non_nullable,
+    _msg_insert_pk_duplicate,
+    _msg_insert_referential_integrity,
     _msg_insert_type_mismatch,
     _msg_no_such_table,
 )
@@ -417,9 +424,23 @@ class DBMS:
                 elif col_meta["type"] == "date":
                     if value_type != "date":
                         raise DBError(_msg_insert_type_mismatch())
+                    validate_date_literal(value)
                     row_values[idx] = value
                 else:
                     raise DBError(_msg_insert_type_mismatch())
+
+            existing_rows = self._scan_rows(txn, table)
+            if has_primary_key_duplicate(meta, row_values, existing_rows):
+                raise DBError(_msg_insert_pk_duplicate())
+
+            def get_parent_meta(parent_table: str):
+                return self._get_table_meta(txn, parent_table)
+
+            def get_parent_rows(parent_table: str):
+                return self._scan_rows(txn, parent_table)
+
+            if row_has_foreign_key_violation(meta, row_values, get_parent_meta, get_parent_rows):
+                raise DBError(_msg_insert_referential_integrity())
 
             row_id = meta.get("next_row_id", 0) + 1
             txn.put(self._row_key(table, row_id), self._to_json(row_values), db=self.rows_db)

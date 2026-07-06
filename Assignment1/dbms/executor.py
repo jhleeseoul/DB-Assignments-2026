@@ -3,6 +3,13 @@ from typing import Any, Callable
 
 import lmdb
 
+from .constraints import (
+    has_duplicate_primary_keys,
+    has_null_key,
+    key_tuple,
+    row_has_foreign_key_violation,
+    validate_date_literal,
+)
 from .errors import DBError
 from .messages import (
     _msg_ambiguous_reference,
@@ -16,6 +23,8 @@ from .messages import (
     _msg_table_not_specified,
     _msg_update_column_not_exist,
     _msg_update_non_nullable,
+    _msg_update_pk_duplicate,
+    _msg_update_referential_integrity,
     _msg_update_type_mismatch,
 )
 from .storage import DBMS
@@ -124,7 +133,7 @@ class QueryExecutor:
             predicate = self._compile_boolean(parsed.get("where"), eval_ctx, "Where")
 
             rows_with_keys = self.db._scan_rows_with_keys(txn, target_table)
-            updated_count = 0
+            updated_rows: list[tuple[bytes, list, list]] = []
             for key, row in rows_with_keys:
                 row_ctx = {binding.alias: row}
                 if not predicate(row_ctx):
@@ -133,10 +142,24 @@ class QueryExecutor:
                 updated_row = list(row)
                 for idx, value in prepared_assignments:
                     updated_row[idx] = value
-                txn.put(key, self.db._to_json(updated_row), db=self.db.rows_db)
-                updated_count += 1
 
-            return updated_count
+                updated_rows.append((key, row, updated_row))
+
+            if not updated_rows:
+                return 0
+
+            self._validate_update_constraints(
+                txn,
+                target_table,
+                meta,
+                rows_with_keys,
+                updated_rows,
+            )
+
+            for key, _old_row, updated_row in updated_rows:
+                txn.put(key, self.db._to_json(updated_row), db=self.db.rows_db)
+
+            return len(updated_rows)
 
     def _coerce_update_value(self, col_name: str, col_meta: dict, literal: dict[str, Any]) -> Any:
         value_type = literal["type"]
@@ -163,9 +186,98 @@ class QueryExecutor:
         if col_meta["type"] == "date":
             if value_type != "date":
                 raise DBError(_msg_update_type_mismatch())
+            validate_date_literal(value)
             return value
 
         raise DBError(_msg_update_type_mismatch())
+
+    def _validate_update_constraints(
+        self,
+        txn: lmdb.Transaction,
+        target_table: str,
+        target_meta: dict,
+        rows_with_keys: list[tuple[bytes, list]],
+        updated_rows: list[tuple[bytes, list, list]],
+    ) -> None:
+        updated_by_key = {key: updated_row for key, _old_row, updated_row in updated_rows}
+        post_update_rows = [
+            updated_by_key.get(key, row)
+            for key, row in rows_with_keys
+        ]
+
+        if has_duplicate_primary_keys(target_meta, post_update_rows):
+            raise DBError(_msg_update_pk_duplicate())
+
+        def get_parent_meta(parent_table: str):
+            return self.db._get_table_meta(txn, parent_table)
+
+        def get_parent_rows(parent_table: str):
+            if parent_table == target_table:
+                return post_update_rows
+            return self.db._scan_rows(txn, parent_table)
+
+        for _key, _old_row, updated_row in updated_rows:
+            if row_has_foreign_key_violation(
+                target_meta,
+                updated_row,
+                get_parent_meta,
+                get_parent_rows,
+            ):
+                raise DBError(_msg_update_referential_integrity())
+
+        if self._is_update_blocked_by_referenced_fk(txn, target_table, target_meta, updated_rows):
+            raise DBError(_msg_update_referential_integrity())
+
+    def _is_update_blocked_by_referenced_fk(
+        self,
+        txn: lmdb.Transaction,
+        target_table: str,
+        target_meta: dict,
+        updated_rows: list[tuple[bytes, list, list]],
+    ) -> bool:
+        target_col_idx = self.db._column_index_map(target_meta)
+
+        for child_table in target_meta.get("referenced_by", []):
+            child_meta = self.db._get_table_meta(txn, child_table)
+            if child_meta is None:
+                continue
+
+            child_col_idx = self.db._column_index_map(child_meta)
+            child_rows = self.db._scan_rows(txn, child_table)
+
+            for fk in child_meta.get("fks", []):
+                if fk.get("ref_table") != target_table:
+                    continue
+
+                parent_columns = self.db._fk_ref_columns(fk)
+                child_columns = self.db._fk_columns(fk)
+                if not parent_columns or not child_columns or len(parent_columns) != len(child_columns):
+                    continue
+
+                if any(col not in target_col_idx for col in parent_columns):
+                    continue
+                if any(col not in child_col_idx for col in child_columns):
+                    continue
+
+                child_ref_values = set()
+                for child_row in child_rows:
+                    child_tuple = key_tuple(child_row, child_columns, child_col_idx)
+                    if has_null_key(child_tuple):
+                        continue
+                    child_ref_values.add(child_tuple)
+
+                if not child_ref_values:
+                    continue
+
+                for _key, old_row, updated_row in updated_rows:
+                    old_key = key_tuple(old_row, parent_columns, target_col_idx)
+                    new_key = key_tuple(updated_row, parent_columns, target_col_idx)
+                    if old_key == new_key or has_null_key(old_key):
+                        continue
+                    if old_key in child_ref_values:
+                        return True
+
+        return False
 
     def _is_delete_blocked_by_fk(
         self,
@@ -457,6 +569,8 @@ class QueryExecutor:
         if operand["kind"] == "literal":
             literal_value = operand["value"]
             literal_type = operand["type"]
+            if literal_type == "date":
+                validate_date_literal(literal_value)
             return (lambda _row_ctx, value=literal_value: value), literal_type
 
         resolved = self._resolve_column(operand, ctx, clause, mode="clause")

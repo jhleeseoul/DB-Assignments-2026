@@ -234,6 +234,46 @@ exit;
 SQL
 )"
 
+SC_M_INPUT="$(cat <<'SQL'
+create table p2 (id int not null, label char(4), primary key(id));
+create table c2 (id int not null, pid int, note char(4), primary key(id), foreign key(pid) references p2(id));
+create table cp2 (a int not null, b int not null, primary key(a,b));
+create table cc2 (id int not null, a int, b int, primary key(id), foreign key(a,b) references cp2(a,b));
+insert into p2 values(1,'one');
+insert into p2 values(1,'dupe');
+insert into c2 values(1,9,'bad');
+insert into c2 values(1,null,'free');
+insert into c2 values(2,1,'ok');
+update p2 set id = 2 where id = 1;
+select * from p2 order by id asc;
+update p2 set label = 'uno' where id = 1;
+update c2 set pid = 7 where id = 2;
+update c2 set pid = null where id = 2;
+update c2 set id = 1 where id = 2;
+select * from c2 order by id asc;
+insert into cp2 values(1,10);
+insert into cp2 values(1,10);
+insert into cc2 values(1,1,null);
+insert into cc2 values(2,1,99);
+update cc2 set b = 10 where id = 1;
+update cp2 set a = 2 where a = 1 and b = 10;
+select * from cp2 order by a asc;
+select * from cc2 order by id asc;
+exit;
+SQL
+)"
+
+SC_N_INPUT="$(cat <<'SQL'
+create table dates2 (id int not null, d date, primary key(id));
+insert into dates2 values(1,2024-02-29);
+insert into dates2 values(2,2026-02-29);
+update dates2 set d = 2026-04-31 where id = 1;
+select * from dates2 where d = 2026-13-01;
+select * from dates2 order by id asc;
+exit;
+SQL
+)"
+
 run_case \
   "SC-A one-line sequence" \
   "$SC_A_INPUT" \
@@ -343,6 +383,34 @@ run_case \
   "B | 1 | 1 | 1 | 0 | 0 | 0" \
   "count(*) | count(note) | avg(val) | avg(note)" \
   "4 | 3 | 20.0 | 0"
+
+run_case \
+  "SC-M phase2 pk/fk correctness" \
+  "$SC_M_INPUT" \
+  "'p2' table is created" \
+  "'c2' table is created" \
+  "'cp2' table is created" \
+  "'cc2' table is created" \
+  "1 row inserted::5" \
+  "Insert has failed: primary key duplication::2" \
+  "Insert has failed: referential integrity violation::2" \
+  "Update has failed: referential integrity violation::3" \
+  "Update has failed: primary key duplication" \
+  "'1' row(s) updated::3" \
+  "1 | one" \
+  "1 | null | free" \
+  "2 | null | ok" \
+  "1 | 10" \
+  "1 | 1 | 10"
+
+run_case \
+  "SC-N phase2 date validation" \
+  "$SC_N_INPUT" \
+  "'dates2' table is created" \
+  "1 row inserted" \
+  "Date value is invalid::3" \
+  "1 | 2024-02-29" \
+  "1 row in set"
 
 echo "[STEP] Running message verifier"
 if ! bash "$VERIFY_MSG"; then
