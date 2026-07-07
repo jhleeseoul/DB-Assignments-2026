@@ -274,6 +274,55 @@ exit;
 SQL
 )"
 
+SC_O_INPUT="$(cat <<'SQL'
+create table po_students (id int not null, name char(6), primary key(id));
+create table po_lectures (id int not null, name char(6), capacity int, primary key(id));
+create table po_apply (
+  sid int not null,
+  lid int not null,
+  primary key(sid,lid),
+  foreign key(sid) references po_students(id),
+  foreign key(lid) references po_lectures(id)
+);
+insert into po_students values(1,'alice');
+insert into po_students values(2,'bob');
+insert into po_lectures values(10,'db',30);
+insert into po_lectures values(20,'os',40);
+insert into po_lectures values(30,'net',20);
+insert into po_apply values(1,10);
+insert into po_apply values(1,20);
+insert into po_apply values(2,30);
+select po_students.id, po_lectures.name
+from po_students
+join po_apply on po_students.id = po_apply.sid
+join po_lectures on po_apply.lid = po_lectures.id
+where po_lectures.capacity >= 30
+order by po_lectures.id desc
+limit 2;
+select po_students.id, count(*), sum(po_lectures.capacity)
+from po_students
+join po_apply on po_students.id = po_apply.sid
+join po_lectures on po_apply.lid = po_lectures.id
+group by po_students.id
+order by po_students.id asc;
+exit;
+SQL
+)"
+
+SC_P_INPUT="$(cat <<'SQL'
+create table pe1 (id int, c char(3));
+create table pe2 (id int);
+insert into pe1 values(1,'abc');
+insert into pe2 values(1);
+select pe1.id from pe1 join pe2 on pe1.id = pe2.id where id = 1;
+update pe1 set id = 2 where t9.id = 1;
+delete from pe1 where no_col = 1;
+select id from pe1 where c > 'a';
+select id from pe1 where id = 1;
+exit;
+SQL
+)"
+
 run_case \
   "SC-A one-line sequence" \
   "$SC_A_INPUT" \
@@ -410,6 +459,34 @@ run_case \
   "1 row inserted" \
   "Date value is invalid::3" \
   "1 | 2024-02-29" \
+  "1 row in set"
+
+run_case \
+  "SC-O phase3 planner select equivalence" \
+  "$SC_O_INPUT" \
+  "'po_students' table is created" \
+  "'po_lectures' table is created" \
+  "'po_apply' table is created" \
+  "1 row inserted::8" \
+  "po_students.id | po_lectures.name" \
+  "1 | os" \
+  "1 | db" \
+  "2 rows in set" \
+  "po_students.id | count(*) | sum(po_lectures.capacity)" \
+  "1 | 2 | 70" \
+  "2 | 1 | 20"
+
+run_case \
+  "SC-P phase3 shared expression compiler" \
+  "$SC_P_INPUT" \
+  "'pe1' table is created" \
+  "'pe2' table is created" \
+  "Where clause contains ambiguous column reference" \
+  "Where clause trying to reference tables which are not specified" \
+  "Where clause trying to reference non existing column" \
+  "Trying to compare incomparable columns or values" \
+  "id" \
+  "1" \
   "1 row in set"
 
 echo "[STEP] Running message verifier"
