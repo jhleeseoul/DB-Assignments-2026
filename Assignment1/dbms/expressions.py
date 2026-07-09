@@ -63,6 +63,56 @@ class ExpressionCompiler:
 
         return EvalContext(bindings=bindings, table_lookup=table_lookup, unqualified=unqualified)
 
+    def split_conjuncts(self, expr: dict | None) -> list[dict]:
+        if expr is None:
+            return []
+        if expr.get("type") == "and":
+            return self.split_conjuncts(expr["left"]) + self.split_conjuncts(expr["right"])
+        return [expr]
+
+    def combine_conjuncts(self, predicates: list[dict]) -> dict | None:
+        if not predicates:
+            return None
+        combined = predicates[0]
+        for predicate in predicates[1:]:
+            combined = {"type": "and", "left": combined, "right": predicate}
+        return combined
+
+    def referenced_bindings(
+        self,
+        expr: dict,
+        ctx: EvalContext,
+        clause: str = "Where",
+    ) -> set[str]:
+        refs: set[str] = set()
+
+        def visit_operand(operand: dict) -> None:
+            if operand["kind"] == "literal":
+                return
+            resolved = self.resolve_column(operand, ctx, clause, mode="clause")
+            refs.add(resolved.alias)
+
+        def visit(node: dict) -> None:
+            node_type = node.get("type")
+            if node_type in {"and", "or"}:
+                visit(node["left"])
+                visit(node["right"])
+                return
+            if node_type == "not":
+                visit(node["expr"])
+                return
+            if node_type == "comparison":
+                visit_operand(node["left"])
+                visit_operand(node["right"])
+                return
+            if node_type == "null":
+                resolved = self.resolve_column(node["column"], ctx, clause, mode="clause")
+                refs.add(resolved.alias)
+                return
+
+        visit(expr)
+        return refs
+
     def resolve_column(self, ref: dict, ctx: EvalContext, clause: str, mode: str) -> ResolvedColumn:
         ref_table = ref.get("table")
         ref_col = self.normalize_name(ref["column"])

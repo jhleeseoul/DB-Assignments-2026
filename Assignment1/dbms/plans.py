@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .expressions import Binding, EvalContext
@@ -39,9 +39,14 @@ class SelectPlan:
 @dataclass
 class LogicalScan(PlanNode):
     binding: Binding
+    predicates: list[dict] = field(default_factory=list)
 
     def detail(self) -> dict[str, Any]:
-        return {"table": self.binding.table, "alias": self.binding.alias}
+        return {
+            "table": self.binding.table,
+            "alias": self.binding.alias,
+            "predicate_count": len(self.predicates),
+        }
 
 
 @dataclass
@@ -115,9 +120,14 @@ class LogicalProject(PlanNode):
 @dataclass
 class TableScan(PlanNode):
     binding: Binding
+    predicates: list[dict] = field(default_factory=list)
 
     def detail(self) -> dict[str, Any]:
-        return {"table": self.binding.table, "alias": self.binding.alias}
+        return {
+            "table": self.binding.table,
+            "alias": self.binding.alias,
+            "predicate_count": len(self.predicates),
+        }
 
 
 @dataclass

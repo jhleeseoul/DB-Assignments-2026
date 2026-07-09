@@ -35,23 +35,28 @@ def build_select_plan(
         raise DBError("Syntax error")
 
     eval_ctx = expressions.build_eval_context(bindings)
+    pushdown_by_alias, residual_where = _partition_where_predicates(
+        parsed.get("where"),
+        bindings,
+        eval_ctx,
+        expressions,
+    )
 
-    logical = LogicalScan(bindings[0])
-    physical = TableScan(bindings[0])
+    logical = LogicalScan(bindings[0], pushdown_by_alias[bindings[0].alias])
+    physical = TableScan(bindings[0], pushdown_by_alias[bindings[0].alias])
     current_bindings = [bindings[0]]
 
     for join_item, join_binding in zip(parsed.get("joins", []), bindings[1:]):
         join_ctx = expressions.build_eval_context(current_bindings + [join_binding])
-        logical_scan = LogicalScan(join_binding)
-        physical_scan = TableScan(join_binding)
+        logical_scan = LogicalScan(join_binding, pushdown_by_alias[join_binding.alias])
+        physical_scan = TableScan(join_binding, pushdown_by_alias[join_binding.alias])
         logical = LogicalJoin(logical, logical_scan, join_item["on"], join_ctx)
         physical = NestedLoopJoin(physical, physical_scan, join_item["on"], join_ctx)
         current_bindings.append(join_binding)
 
-    where_expr = parsed.get("where")
-    if where_expr is not None:
-        logical = LogicalFilter(logical, where_expr, eval_ctx)
-        physical = Filter(physical, where_expr, eval_ctx)
+    if residual_where is not None:
+        logical = LogicalFilter(logical, residual_where, eval_ctx)
+        physical = Filter(physical, residual_where, eval_ctx)
 
     select_items = parsed["select"]
     has_group_by = parsed.get("group_by") is not None
@@ -94,6 +99,30 @@ def _load_bindings(db: DBMS, txn: lmdb.Transaction, table_refs: list[dict]) -> l
             )
         )
     return bindings
+
+
+def _partition_where_predicates(
+    where_expr: dict | None,
+    bindings: list[Binding],
+    eval_ctx,
+    expressions: ExpressionCompiler,
+) -> tuple[dict[str, list[dict]], dict | None]:
+    pushdown_by_alias: dict[str, list[dict]] = {binding.alias: [] for binding in bindings}
+    residual_predicates: list[dict] = []
+
+    for predicate in expressions.split_conjuncts(where_expr):
+        referenced_aliases = expressions.referenced_bindings(predicate, eval_ctx, "Where")
+        if _is_pushdown_candidate(predicate) and len(referenced_aliases) == 1:
+            alias = next(iter(referenced_aliases))
+            pushdown_by_alias[alias].append(predicate)
+        else:
+            residual_predicates.append(predicate)
+
+    return pushdown_by_alias, expressions.combine_conjuncts(residual_predicates)
+
+
+def _is_pushdown_candidate(predicate: dict) -> bool:
+    return predicate.get("type") in {"comparison", "null"}
 
 
 def _has_aggregate(select_items) -> bool:

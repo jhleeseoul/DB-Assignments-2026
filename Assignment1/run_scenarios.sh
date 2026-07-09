@@ -323,6 +323,38 @@ exit;
 SQL
 )"
 
+SC_Q_INPUT="$(cat <<'SQL'
+create table ql (id int, flag char(1), v int);
+create table qr (lid int, flag char(1), v int);
+insert into ql values(1,'A',10);
+insert into ql values(2,'A',20);
+insert into ql values(3,'B',30);
+insert into qr values(1,'Y',10);
+insert into qr values(2,'Y',99);
+insert into qr values(3,'N',30);
+insert into qr values(4,'Y',40);
+select ql.id, qr.v
+from ql
+join qr on ql.id = qr.lid
+where ql.flag = 'A' and qr.flag = 'Y' and ql.v = qr.v
+order by ql.id asc;
+exit;
+SQL
+)"
+
+SC_R_INPUT="$(cat <<'SQL'
+create table er1 (id int, c char(3));
+create table er2 (id int);
+insert into er1 values(1,'abc');
+insert into er2 values(1);
+select er1.id from er1 join er2 on er1.id = er2.id where id = 1;
+select er1.id from er1 join er2 on er1.id = er2.id where t9.id = 1;
+select er1.id from er1 join er2 on er1.id = er2.id where no_col = 1;
+select er1.id from er1 where er1.c > 'a';
+exit;
+SQL
+)"
+
 run_case \
   "SC-A one-line sequence" \
   "$SC_A_INPUT" \
@@ -488,6 +520,26 @@ run_case \
   "id" \
   "1" \
   "1 row in set"
+
+run_case \
+  "SC-Q phase4 predicate pushdown equivalence" \
+  "$SC_Q_INPUT" \
+  "'ql' table is created" \
+  "'qr' table is created" \
+  "1 row inserted::7" \
+  "ql.id | qr.v" \
+  "1 | 10" \
+  "1 row in set"
+
+run_case \
+  "SC-R phase4 predicate error compatibility" \
+  "$SC_R_INPUT" \
+  "'er1' table is created" \
+  "'er2' table is created" \
+  "Where clause contains ambiguous column reference" \
+  "Where clause trying to reference tables which are not specified" \
+  "Where clause trying to reference non existing column" \
+  "Trying to compare incomparable columns or values"
 
 echo "[STEP] Running message verifier"
 if ! bash "$VERIFY_MSG"; then

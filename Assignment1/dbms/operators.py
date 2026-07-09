@@ -27,16 +27,25 @@ class AggregatedRows:
     rows: list[dict[str, Any]]
 
 
+@dataclass
+class ExecutionStats:
+    scan_rows_read: int = 0
+    scan_rows_emitted: int = 0
+    join_comparisons: int = 0
+
+
 class OperatorExecutor:
     def __init__(
         self,
         db: DBMS,
         txn: lmdb.Transaction,
         expressions: ExpressionCompiler,
+        stats: ExecutionStats | None = None,
     ) -> None:
         self.db = db
         self.txn = txn
         self.expressions = expressions
+        self.stats = stats
 
     def execute(self, node) -> tuple[list[str], list[list[Any]]] | list[dict[str, list]] | AggregatedRows:
         if isinstance(node, TableScan):
@@ -57,7 +66,25 @@ class OperatorExecutor:
 
     def _execute_table_scan(self, node: TableScan) -> list[dict[str, list]]:
         rows = self.db._scan_rows(self.txn, node.binding.table)
-        return [{node.binding.alias: row} for row in rows]
+        if self.stats is not None:
+            self.stats.scan_rows_read += len(rows)
+
+        eval_ctx = self.expressions.build_eval_context([node.binding])
+        predicates = [
+            self.expressions.compile_boolean(predicate, eval_ctx, "Where")
+            for predicate in node.predicates
+        ]
+
+        output_rows: list[dict[str, list]] = []
+        for row in rows:
+            row_ctx = {node.binding.alias: row}
+            if predicates and not all(predicate(row_ctx) for predicate in predicates):
+                continue
+            output_rows.append(row_ctx)
+
+        if self.stats is not None:
+            self.stats.scan_rows_emitted += len(output_rows)
+        return output_rows
 
     def _execute_nested_loop_join(self, node: NestedLoopJoin) -> list[dict[str, list]]:
         left_rows = self.execute(node.left)
@@ -74,6 +101,8 @@ class OperatorExecutor:
         output_rows: list[dict[str, list]] = []
         for left_ctx in left_rows:
             for right_ctx in right_rows:
+                if self.stats is not None:
+                    self.stats.join_comparisons += 1
                 merged = dict(left_ctx)
                 merged.update(right_ctx)
                 left_val = merged[left_col.alias][left_col.index]
